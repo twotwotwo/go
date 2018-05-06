@@ -942,73 +942,99 @@ func Index(s, substr string) int {
 		return IndexByte(s, substr[0])
 	case n == len(s):
 		if substr == s {
-			return 0
-		}
+			return 0 
+		} 
 		return -1
 	case n > len(s):
 		return -1
-	case n <= bytealg.MaxLen:
-		// Use brute force when s and substr both are small
-		if len(s) <= bytealg.MaxBruteForce {
-			return bytealg.IndexString(s, substr)
-		}
-		c := substr[0]
-		i := 0
-		t := s[:len(s)-n+1]
-		fails := 0
-		for i < len(t) {
-			if t[i] != c {
-				// IndexByte is faster than bytealg.IndexString, so use it as long as
-				// we're not getting lots of false positives.
-				o := IndexByte(t[i:], c)
-				if o < 0 {
-					return -1
-				}
-				i += o
-			}
-			if s[i:i+n] == substr {
-				return i
-			}
-			fails++
-			i++
-			// Switch to bytealg.IndexString when IndexByte produces too many false positives.
-			if fails > bytealg.Cutover(i) {
-				r := bytealg.IndexString(s[i:], substr)
-				if r >= 0 {
-					return r + i
-				}
-				return -1
-			}
-		}
-		return -1
+	case n <= bytealg.MaxLen && len(s) < bytealg.MaxBruteForce:
+		return bytealg.IndexString(s, substr)
 	}
+
 	c := substr[0]
 	i := 0
 	t := s[:len(s)-n+1]
 	fails := 0
-	for i < len(t) {
+
+	// Split long values of substr into a prefix and remainder.
+	// Lets us detect the costly situation where a long prefix of substr matches, but not all of it.
+	const longCutoff = 64
+	m := n
+	isLong := n > longCutoff
+	if isLong {
+		m = longCutoff
+	}
+	pfx := substr[:m]
+
+	for {
 		if t[i] != c {
+			// IndexByte is faster than bytealg.Index, so use it as long as
+			// we're not getting lots of false positives.
 			o := IndexByte(t[i:], c)
-			if o < 0 {
+			if o == -1 {
 				return -1
 			}
 			i += o
 		}
-		if s[i:i+n] == substr {
-			return i
-		}
-		i++
-		fails++
-		if fails >= 4+i>>4 && i < len(t) {
-			// See comment in ../bytes/bytes_generic.go.
-			j := indexRabinKarp(s[i:], substr)
-			if j < 0 {
-				return -1
+		if s[i:i+m] == pfx {
+			if isLong && s[i+m:i+n] != substr[m:] {
+				// Mismatch deep in substr.
+				// Treat it as more costly than other, faster fails.
+				fails += n / longCutoff
+			} else {
+				return i
 			}
-			return i + j
+		}
+		fails++
+		i++
+		if i == len(t) {
+			return -1
+		}
+		if fails > bytealg.Cutover(i) {
+			// Too many false positives; fall back.
+			break
 		}
 	}
-	return -1
+
+	// Prefix search if we can
+	if bytealg.MaxLen > 0 {
+		m = n
+		isLong = n > bytealg.MaxLen
+		if isLong {
+			m = bytealg.MaxLen
+		}
+		pfx = substr[:m]
+
+		fails = 0
+		t = s[:len(s)-n+m]
+
+		for {
+			o := bytealg.IndexString(t[i:], pfx)
+			if o == -1 {
+				return -1
+			}
+			i += o
+			if !isLong || s[i+m:i+n] == substr[m:] {
+				return i
+			}
+			fails++
+			i++
+			if i > len(s) - n {
+				return -1
+			}
+			if fails > 1 && o < len(substr) - 1 {
+				// False positives too close together.
+				// Fall back to Rabin-Karp.
+				break
+			}
+		}
+	}
+
+	o := indexRabinKarp(s[i:], substr)
+	if o == -1 {
+		return o
+	}
+	return i + o
 }
 
 func indexRabinKarp(s, substr string) int {

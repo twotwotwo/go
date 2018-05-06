@@ -1740,3 +1740,79 @@ func BenchmarkIndexPeriodic(b *testing.B) {
 		})
 	}
 }
+
+var ABC = []byte("ABC")
+var ABCs = Repeat(ABC, 1<<10)
+var benchInputTorture = append(append(ABCs, []byte("123")...), ABCs...)
+var benchNeedleTorture = append(ABCs, ABC...)
+
+func BenchmarkIndexTorture(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Index(benchInputTorture, benchNeedleTorture)
+	}
+}
+
+func BenchmarkCountTorture(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Count(benchInputTorture, benchNeedleTorture)
+	}
+}
+
+func BenchmarkCountTortureOverlapping(b *testing.B) {
+	A := Repeat(ABC, 1<<20)
+	B := ABCs
+	for i := 0; i < b.N; i++ {
+		Count(A, B)
+	}
+}
+
+// BenchmarkIndexTorture64K tests a worst-case pattern where the first byte
+// of sep doesn't occur too often
+func BenchmarkIndexTorture64K(b *testing.B) {
+	pattern := []byte("0..................")
+	s := Repeat(pattern, 1<<12)
+	sep := append(Repeat(pattern, 1<<11), '!')
+	for i := 0; i < b.N; i++ {
+		Index(s, sep)
+	}
+}
+
+func BenchmarkIndexTorture128K(b *testing.B) {
+	pattern := []byte("0..................")
+	s := Repeat(pattern, 1<<13)
+	sep := append(Repeat(pattern, 1<<12), '!')
+	for i := 0; i < b.N; i++ {
+		Index(s, sep)
+	}
+}
+
+func BenchmarkIndexLong(b *testing.B) {
+	// Long sep, inputs where IndexByte doesn't work.
+	sep := []byte("/usr/local/include/blah-3.0.13-123-spiffy/blipple/boop/zip/baz.h")
+	s := append(Repeat([]byte("/foo/bar/baz/\n"), 1<<12), sep...)
+	for i := 0; i < b.N; i++ {
+		Index(s, sep)
+	}
+}
+
+// BenchmarkPrefixFail64 tests prefix searches that fail often. The 64-byte pattern fails
+// as frequently as possible without triggering a fallback on amd64 with AVX2.
+func BenchmarkIndexPrefixFail64(b *testing.B) {
+	pattern := append(Repeat([]byte("123123123"), 7), '.')
+	sep := append(Repeat([]byte("123123123"), 7), '!')
+	s := Repeat(pattern, 1024)
+	for i := 0; i < b.N; i++ {
+		Index(s, sep)
+	}
+}
+
+// BenchmarkPrefixFail64 tests prefix searches that fail often. The 9-byte pattern fails
+// as frequently as possible without triggering a fallback on arm64.
+func BenchmarkIndexPrefixFail9(b *testing.B) {
+	pattern := []byte("12312312.")
+	sep := []byte("12312312!")
+	s := Repeat(pattern, 1024)
+	for i := 0; i < b.N; i++ {
+		Index(s, sep)
+	}
+}

@@ -25,5 +25,5 @@ func IndexString(a, b string) int {
 // n is the number of bytes processed so far.
 // See the bytes.Index implementation for details.
 func Cutover(n int) int {
-	panic("unimplemented")
+	return 4+n>>4
 }

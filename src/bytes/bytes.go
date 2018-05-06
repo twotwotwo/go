@@ -839,80 +839,99 @@ func Index(s, sep []byte) int {
 		return IndexByte(s, sep[0])
 	case n == len(s):
 		if Equal(sep, s) {
-			return 0
-		}
+			return 0 
+		} 
 		return -1
 	case n > len(s):
 		return -1
-	case n <= bytealg.MaxLen:
-		// Use brute force when s and sep both are small
-		if len(s) <= bytealg.MaxBruteForce {
-			return bytealg.Index(s, sep)
-		}
-		c := sep[0]
-		i := 0
-		t := s[:len(s)-n+1]
-		fails := 0
-		for i < len(t) {
-			if t[i] != c {
-				// IndexByte is faster than bytealg.Index, so use it as long as
-				// we're not getting lots of false positives.
-				o := IndexByte(t[i:], c)
-				if o < 0 {
-					return -1
-				}
-				i += o
+	case n <= bytealg.MaxLen && len(s) < bytealg.MaxBruteForce:
+		return bytealg.Index(s, sep)
+	}
+
+	c := sep[0]
+	i := 0
+	t := s[:len(s)-n+1]
+	fails := 0
+
+	// Split long values of sep into a prefix and remainder.
+	// Lets us detect the costly situation where a long prefix of sep matches, but not all of it.
+	const longCutoff = 64
+	m := n
+	isLong := n > longCutoff
+	if isLong {
+		m = longCutoff
+	}
+	pfx := sep[:m]
+
+	for {
+		if t[i] != c {
+			// IndexByte is faster than bytealg.Index, so use it as long as
+			// we're not getting lots of false positives.
+			o := IndexByte(t[i:], c)
+			if o == -1 {
+				return -1
 			}
-			if Equal(s[i:i+n], sep) {
+			i += o
+		}
+		if Equal(s[i:i+m], pfx) {
+			if isLong && !Equal(s[i+m:i+n], sep[m:]) {
+				// Mismatch deep in sep.
+				// Treat it as more costly than other, faster fails.
+				fails += n / longCutoff
+			} else {
+				return i
+			}
+		}
+		fails++
+		i++
+		if i == len(t) {
+			return -1
+		}
+		if fails > bytealg.Cutover(i) {
+			// Too many false positives; fall back.
+			break
+		}
+	}
+
+	// Prefix search if we can
+	if bytealg.MaxLen > 0 {
+		m = n
+		isLong = n > bytealg.MaxLen
+		if isLong {
+			m = bytealg.MaxLen
+		}
+		pfx = sep[:m]
+
+		fails = 0
+		t = s[:len(s)-n+m]
+
+		for {
+			o := bytealg.Index(t[i:], pfx)
+			if o == -1 {
+				return -1
+			}
+			i += o
+			if !isLong || Equal(s[i+m:i+n], sep[m:]) {
 				return i
 			}
 			fails++
 			i++
-			// Switch to bytealg.Index when IndexByte produces too many false positives.
-			if fails > bytealg.Cutover(i) {
-				r := bytealg.Index(s[i:], sep)
-				if r >= 0 {
-					return r + i
-				}
+			if i > len(s) - n {
 				return -1
 			}
-		}
-		return -1
-	}
-	c := sep[0]
-	i := 0
-	fails := 0
-	t := s[:len(s)-n+1]
-	for i < len(t) {
-		if t[i] != c {
-			o := IndexByte(t[i:], c)
-			if o < 0 {
+			if fails > 1 && o < len(sep) - 1 {
+				// False positives too close together.
+				// Fall back to Rabin-Karp.
 				break
 			}
-			i += o
-		}
-		if Equal(s[i:i+n], sep) {
-			return i
-		}
-		i++
-		fails++
-		if fails >= 4+i>>4 && i < len(t) {
-			// Give up on IndexByte, it isn't skipping ahead
-			// far enough to be better than Rabin-Karp.
-			// Experiments (using IndexPeriodic) suggest
-			// the cutover is about 16 byte skips.
-			// TODO: if large prefixes of sep are matching
-			// we should cutover at even larger average skips,
-			// because Equal becomes that much more expensive.
-			// This code does not take that effect into account.
-			j := indexRabinKarp(s[i:], sep)
-			if j < 0 {
-				return -1
-			}
-			return i + j
 		}
 	}
-	return -1
+
+	o := indexRabinKarp(s[i:], sep)
+	if o == -1 {
+		return o
+	}
+	return i + o
 }
 
 func indexRabinKarp(s, sep []byte) int {
